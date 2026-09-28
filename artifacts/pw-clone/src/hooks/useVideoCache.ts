@@ -218,14 +218,14 @@ export function useVideoCache() {
         // 3. Fetch MPD — try direct browser fetch first (no-referrer to avoid
         //    origin checks), then fall back to server proxy with multiple headers.
         let mpdText: string;
-        const directRes = await fetch(resolvedMpdUrl, { signal, referrerPolicy: "no-referrer" }).catch(() => null);
+        const directRes = resolvedMpdUrl ? await fetch(resolvedMpdUrl, { signal, referrerPolicy: "no-referrer" }).catch(() => null) : null;
         if (directRes && directRes.ok) {
           mpdText = await directRes.text();
           // Update resolvedMpdUrl in case it redirected
         } else {
           // Fallback: server-side proxy tries 3 referrer/origin variants
           const proxyRes = await fetch(
-            `/api/proxy?url=${encodeURIComponent(resolvedMpdUrl)}`,
+            `/api/proxy?url=${encodeURIComponent(resolvedMpdUrl || "")}`,
             { signal }
           );
           if (!proxyRes.ok) throw new Error(`Cannot access video stream (${proxyRes.status}). The video may be DRM-protected or geo-restricted.`);

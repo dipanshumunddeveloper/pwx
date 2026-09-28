@@ -1,0 +1,10 @@
+
+> @workspace/pw-clone@0.0.0 dev /app/artifacts/pw-clone
+> vite --config vite.config.ts --host 0.0.0.0
+
+
+  VITE v7.3.3  ready in 660 ms
+
+  ➜  Local:   http://localhost:5000/
+  ➜  Network: http://192.168.0.2:5000/
+ ELIFECYCLE  Command failed with exit code 143.

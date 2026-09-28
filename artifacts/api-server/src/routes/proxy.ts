@@ -33,9 +33,14 @@ function isAllowedCdnHost(hostname: string): boolean {
 
 function injectBaseUrl(mpdXml: string, baseUrl: string): string {
   if (mpdXml.includes("<BaseURL>")) {
-    return mpdXml.replace(/<BaseURL>.*?<\/BaseURL>/g, `<BaseURL>${baseUrl}</BaseURL>`);
+    return mpdXml.replace(/<BaseURL>(.*?)<\/BaseURL>/g, (match, p1) => {
+      if (p1.startsWith("http://") || p1.startsWith("https://")) {
+        return match;
+      }
+      return `<BaseURL>${baseUrl}${p1}</BaseURL>`;
+    });
   }
-  return mpdXml.replace(/<Period([^>]*)>/, `<Period$1>\n    <BaseURL>${baseUrl}</BaseURL>`);
+  return mpdXml.replace(/<Period([^>]*)>/g, `<Period$1>\n    <BaseURL>${baseUrl}</BaseURL>`);
 }
 
 // Headers to try in order — each mimics a likely whitelisted referrer on PW's CloudFront WAF
@@ -489,7 +494,7 @@ proxyRouter.get("/proxy", async (req, res) => {
       res.setHeader("Content-Type", upstream.headers.get("content-type") || "video/mp4");
       
       if (upstream.body) {
-        upstream.body.pipe(res);
+        Readable.fromWeb(upstream.body as any).pipe(res);
       } else {
         res.end();
       }
