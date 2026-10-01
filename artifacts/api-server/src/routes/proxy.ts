@@ -97,7 +97,7 @@ proxyRouter.get("/vidcloud-stream", async (req, res) => {
     return;
   }
 
-  const vidcloudUrl = `https://vidcloud.eu.org/play.php?batch_id=${encodeURIComponent(batchId)}&subject_id=${encodeURIComponent(subjectId || "")}&video_id=${encodeURIComponent(videoId)}&video_type=new`;
+  const vidcloudUrl = `https://vidcloud.eu.org/play.php?batch_id=${encodeURIComponent(batchId)}&subject_id=${encodeURIComponent(subjectId || "")}&video_id=${encodeURIComponent(videoId)}&video_typ=normal`;
 
   try {
     const upstream = await fetch(vidcloudUrl, {
@@ -108,6 +108,14 @@ proxyRouter.get("/vidcloud-stream", async (req, res) => {
         "Referer": "https://www.pw.live/",
       },
     });
+
+    if (!upstream.ok) {
+      req.log.error({ status: upstream.status }, "vidcloud-stream upstream not ok");
+      res.status(upstream.status === 404 ? 404 : 502).json({ 
+        error: upstream.status === 404 ? "Video URL not found" : "Failed to fetch vidcloud page" 
+      });
+      return;
+    }
 
     const html = await upstream.text();
 
@@ -132,10 +140,15 @@ proxyRouter.get("/vidcloud-stream", async (req, res) => {
       }
     }
 
+    if (found.size === 0) {
+      req.log.warn({ videoId }, "No video URLs found in vidcloud response");
+      res.status(404).json({ error: "Video URL not found", urls: [] });
+      return;
+    }
+
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.json({
       urls: [...found],
-      // Also include the raw page length for debugging
       pageLength: html.length,
     });
   } catch (err) {
@@ -147,6 +160,7 @@ proxyRouter.get("/vidcloud-stream", async (req, res) => {
 // ── learnbyakp video-url proxy ───────────────────────────────────────────────
 // Forwards to https://learnbyakp.onrender.com/api/video-url and returns the
 // full JSON (url, directUrl, streamUrl, signedUrl, clearKeys, vid, topic).
+// Includes fallback to alternative sources and better error handling.
 proxyRouter.options("/akp-video-url", (_req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
@@ -160,25 +174,73 @@ proxyRouter.get("/akp-video-url", async (req, res) => {
     return;
   }
 
-  const upstream = `https://learnbyakp.onrender.com/api/video-url?batchId=${encodeURIComponent(batchId)}&childId=${encodeURIComponent(childId)}`;
+  // Try multiple upstream sources
+  const upstreamSources = [
+    `https://learnbyakp.onrender.com/api/video-url?batchId=${encodeURIComponent(batchId)}&childId=${encodeURIComponent(childId)}`,
+    `https://learn-by-akp.vercel.app/api/video-url?batchId=${encodeURIComponent(batchId)}&childId=${encodeURIComponent(childId)}`,
+  ];
 
-  try {
-    const resp = await fetch(upstream, {
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Accept": "application/json, */*",
-        "Referer": "https://learnbyakp.online/",
-        "Origin": "https://learnbyakp.online",
-      },
-    });
+  let lastError: any = null;
+  let lastStatus = 502;
 
-    const data = await resp.json();
-    res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Cache-Control", "public, max-age=300");
-    res.status(resp.status).json(data);
-  } catch (err) {
-    req.log.error({ err }, "akp-video-url proxy fetch failed");
-    res.status(502).json({ error: "Upstream fetch failed" });
+  for (const upstream of upstreamSources) {
+    try {
+      const resp = await fetch(upstream, {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+          "Accept": "application/json, */*",
+          "Referer": "https://learnbyakp.online/",
+          "Origin": "https://learnbyakp.online",
+        },
+      });
+
+      const data = await resp.json();
+
+      // Handle 404 or specific error responses
+      if (resp.status === 404) {
+        lastStatus = 404;
+        lastError = "Video URL not found";
+        continue;
+      }
+
+      // Check if response contains error indicating resource not found
+      if (data?.error && (data.error.toLowerCase().includes("not found") || data.error.toLowerCase().includes("invalid"))) {
+        lastStatus = 404;
+        lastError = data.error || "Video URL not found";
+        continue;
+      }
+
+      // Check if response contains valid URL data
+      if (!data?.url && !data?.streamUrl && !data?.directUrl) {
+        lastStatus = 404;
+        lastError = "Video URL not found in response";
+        continue;
+      }
+
+      if (resp.status >= 200 && resp.status < 300) {
+        res.setHeader("Access-Control-Allow-Origin", "*");
+        res.setHeader("Cache-Control", "public, max-age=300");
+        res.status(200).json(data);
+        return;
+      }
+
+      lastStatus = resp.status;
+      lastError = data?.error || "Upstream error";
+    } catch (err) {
+      req.log.error({ err, source: upstream }, "akp-video-url fetch attempt failed");
+      lastError = err;
+      continue;
+    }
+  }
+
+  // All sources exhausted
+  req.log.error({ batchId, childId, error: lastError }, "akp-video-url all sources failed");
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  
+  if (lastStatus === 404 || (typeof lastError === "string" && lastError.toLowerCase().includes("not found"))) {
+    res.status(404).json({ error: "Video URL not found" });
+  } else {
+    res.status(lastStatus).json({ error: lastError instanceof Error ? lastError.message : String(lastError) || "Upstream service unavailable" });
   }
 });
 
@@ -363,6 +425,14 @@ proxyRouter.get("/pw-video/:videoId", async (req, res) => {
     });
 
     const data = await upstream.json();
+    
+    // Check if video was not found
+    if (upstream.status === 404 || data?.error?.includes("not found")) {
+      res.setHeader("Access-Control-Allow-Origin", "*");
+      res.status(404).json({ error: "Video not found" });
+      return;
+    }
+
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Cache-Control", "public, max-age=300");
     res.status(upstream.status).json(data);
@@ -485,6 +555,11 @@ proxyRouter.get("/proxy", async (req, res) => {
         upstream = await fetch(rawUrl, { headers: CDN_HEADER_VARIANTS[1] });
       }
       
+      if (upstream.status === 404) {
+        res.status(404).json({ error: "Video segment not found" });
+        return;
+      }
+
       res.status(upstream.status);
       res.setHeader("Content-Type", upstream.headers.get("content-type") || "video/mp4");
       
@@ -532,6 +607,10 @@ proxyRouter.get("/dash-seg/:sig/{*path}", async (req, res) => {
     try {
       const upstream = await fetch(cdnUrl, { headers });
       if (upstream.status === 403) continue;
+      if (upstream.status === 404) {
+        res.status(404).json({ error: "Segment not found" });
+        return;
+      }
 
       res.setHeader("Access-Control-Allow-Origin", "*");
       res.setHeader("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
@@ -583,6 +662,13 @@ proxyRouter.get("/rarestudy-pdf", async (req, res) => {
     });
 
     const data = await upstream.json();
+    
+    if (upstream.status === 404 || data?.error?.includes("not found")) {
+      res.setHeader("Access-Control-Allow-Origin", "*");
+      res.status(404).json({ error: "Resource not found" });
+      return;
+    }
+
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Cache-Control", "public, max-age=1800");
     res.status(upstream.status).json(data);
@@ -675,6 +761,11 @@ proxyRouter.get("/streama-proxy", async (req, res) => {
         "Accept": "*/*",
       },
     });
+
+    if (upstream.status === 404) {
+      res.status(404).json({ error: "Stream not found" });
+      return;
+    }
 
     const contentType = upstream.headers.get("content-type") || "application/octet-stream";
     const isM3u8 = fullUrl.endsWith(".m3u8") || contentType.toLowerCase().includes("mpegurl");
