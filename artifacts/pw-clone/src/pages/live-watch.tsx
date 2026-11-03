@@ -38,6 +38,7 @@ export default function LiveWatch() {
       const raw = sp.get("clearKeys");
       if (raw) inlineClearKeys = JSON.parse(raw);
     } catch {}
+    return undefined;
 
     /* ── Case 1: direct streamUrl passed ─────────────────────────────── */
     if (directStreamUrl) {

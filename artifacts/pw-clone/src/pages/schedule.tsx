@@ -86,7 +86,7 @@ function ScheduleCard({ item, batchName, now: _now }: ScheduleCardProps) {
   const teacherName: string = raw.teacherName || raw.teacher?.name || raw.instructorName || "";
   const meta = getSubjectMeta(subjectName);
 
-  const buildLiveSrcs = (): LiveSrcs => {
+  const buildLiveSrcs = (): any => {
     const title = item.data.topic.trim();
     const akpParams = new URLSearchParams({
       batch_id:    batchId,
@@ -142,7 +142,7 @@ function ScheduleCard({ item, batchName, now: _now }: ScheduleCardProps) {
 
   return (
     <>
-      {liveModal && <LivePlayerModal srcs={liveModal} title={item.data.topic.trim()} onClose={() => setLiveModal(null)} />}
+      {/* {liveModal && <LivePlayerModal srcs={liveModal} title={item.data.topic.trim()} onClose={() => setLiveModal(null)} />} */}
 
       <motion.div
         initial={{ opacity: 0, x: 16 }}

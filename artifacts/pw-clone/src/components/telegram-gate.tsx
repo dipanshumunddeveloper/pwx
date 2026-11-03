@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { useTelegramGateSetting } from "@/hooks/useAdmin";
+import { useAccessGateSetting } from "@/hooks/useAdmin";
 import { apiUrl } from "@/lib/apiUrl";
 
 type Lang = "hi" | "en";
@@ -111,8 +111,7 @@ function getSavedSession(): { sessionId: string; botLink: string } | null {
 }
 
 export function TelegramGate({ children }: { children: React.ReactNode }) {
-  const { data: gateSetting, isLoading: gateLoading } =
-    useTelegramGateSetting();
+  const { data: gateSetting, isLoading: gateLoading } = useAccessGateSetting();
   const [lang, setLang] = useState<Lang>("en");
   const [auth, setAuth] = useState<StoredAuth | null>(getStoredAuth);
   const [step, setStep] = useState<Step>("join");
